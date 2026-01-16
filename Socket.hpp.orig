@@ -1,0 +1,22 @@
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <cstring>
+#include <iostream>
+#include <stdexcept>
+
+namespace Socket {
+class WebSocket{
+public:
+    WebSocket(int domain = AF_INET, int type = SOCK_STREAM, int protocol = 0) {
+        int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (server_fd < 0) {
+            throw std::runtime_error("Failed to create socket");
+        }
+
+    };
+    ~WebSocket() {};
+    private:
+};
+}
