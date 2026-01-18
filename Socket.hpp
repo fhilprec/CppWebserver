@@ -30,7 +30,7 @@ public:
         }
 
         if (listen(server_socket_fd, backlog) < 0) {
-            close(server_socket_fd);
+            close(server_socket_fd); //TODO write class to satisfy RAII
             throw std::runtime_error("Failed to listen on socket");
         }
 
