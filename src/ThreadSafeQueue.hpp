@@ -2,8 +2,6 @@
 #include <queue>
 
 
-
-
 class ThreadSafeQueue {
     public:
         ThreadSafeQueue() = default;

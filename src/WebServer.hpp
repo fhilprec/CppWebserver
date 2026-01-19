@@ -1,6 +1,5 @@
-#include "Socket.hpp"
+
 #include <memory>
-#include "ThreadSafeQueue.hpp"
 #include <thread>
 #include <string>
 #include <fstream>
@@ -10,6 +9,11 @@
 #include <chrono>
 #include <stdexcept>
 #include <unistd.h>
+#include <condition_variable>
+
+#include "ThreadSafeQueue.hpp"
+#include "Socket.hpp"
+#include "HttpRequestParser.hpp"
 
 
 namespace Webserver {
@@ -20,6 +24,7 @@ public:
         // Do initialization
         ws = std::make_unique<Socket::WebSocket>();
         this->poolsize = poolsize;
+        this->shutdown = false;
 
         for(int i = 0; i < poolsize; i++){
             // Use lambda to capture 'this' and call member function
@@ -40,18 +45,34 @@ public:
                 close(ws->getSocketFD());
             }
             else {
+                std::lock_guard<std::mutex> lock(cv_mtx);
                 connectionQueue.push(client_fd);
+                cv.notify_one();
             }
         }
     }
 
     void workerThreadJob(){
         while(true){
+            std::unique_lock<std::mutex> lock(cv_mtx);
+            cv.wait(lock, [this]{ return !connectionQueue.isEmpty() || shutdown; });
+            //here multple threads can wake up -> spurious wakeup
+            //that does not matter though since pop() is thread safe and we check for client_fd == -1
+
             int client_fd = connectionQueue.pop();
+            lock.unlock();
             if (client_fd == -1) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100)); //improve waiting strategy
                 continue; // Queue is empty, wait and try again
             }
+
+            // Optionally Read the HTTP request
+            // char readbuffer[4096] = {0};
+            // recv(client_fd, readbuffer, sizeof(readbuffer), 0);
+            // std::cout << "=== Request on fd " << client_fd << " ===\n";
+            // std::cout << readbuffer << "\n";
+            // std::cout << "=== End Request ===\n";
+
+
             std::ifstream t("files/myHomePage.html");
             std::stringstream buffer;
             buffer << t.rdbuf();
@@ -70,5 +91,10 @@ private:
     std::vector<std::thread> threads;
     ThreadSafeQueue connectionQueue;
     int poolsize;
+
+    //condition_variable block
+    std::condition_variable cv;
+    std::mutex cv_mtx;
+    bool shutdown;
 };
-}
+} // namespace Webserver
