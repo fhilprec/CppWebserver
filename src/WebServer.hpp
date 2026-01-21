@@ -22,9 +22,24 @@ namespace Webserver {
 class WebServer {
 public:
 
-    WebServer(int poolsize) {
+    WebServer(int poolsize, bool enable_ssl = false,
+              const char* cert_file = nullptr, const char* key_file = nullptr,
+              uint16_t port = 8080) {
         // Do initialization
-        ws = std::make_unique<Socket::WebSocket>();
+        if (enable_ssl) {
+            ws = std::make_unique<Socket::WebSocket>(
+                AF_INET, SOCK_STREAM, 0, SOL_SOCKET, SO_REUSEADDR,
+                AF_INET, INADDR_ANY, port, 3,
+                true, cert_file, key_file
+            );
+        } else {
+            ws = std::make_unique<Socket::WebSocket>(
+                AF_INET, SOCK_STREAM, 0, SOL_SOCKET, SO_REUSEADDR,
+                AF_INET, INADDR_ANY, port, 3,
+                false, nullptr, nullptr
+            );
+        }
+
         this->poolsize = poolsize;
         this->shutdown = false;
 
@@ -56,6 +71,14 @@ public:
         }
     }
 
+    // Helper struct to hold both socket FD and SSL pointer
+    struct ClientConnection {
+        int fd;
+        SSL* ssl;
+        ClientConnection() : fd(-1), ssl(nullptr) {}
+        ClientConnection(int f, SSL* s) : fd(f), ssl(s) {}
+    };
+
     void workerThreadJob(){
         while(true){
             std::unique_lock<std::mutex> lock(cv_mtx);
@@ -75,16 +98,54 @@ public:
                 continue; // Queue is empty, wait and try again
             }
 
+            SSL* ssl = nullptr;
+            bool ssl_enabled = ws->isSSLEnabled();
+
+            // If SSL is enabled, perform SSL handshake
+            if (ssl_enabled) {
+                ssl = SSL_new(ws->getSSLContext());
+                if (!ssl) {
+                    std::cerr << "Failed to create SSL structure for client fd " << client_fd << "\n";
+                    close(client_fd);
+                    continue;
+                }
+
+                SSL_set_fd(ssl, client_fd);
+
+                int ssl_accept_result = SSL_accept(ssl);
+                if (ssl_accept_result <= 0) {
+                    int ssl_error = SSL_get_error(ssl, ssl_accept_result);
+                    std::cerr << "SSL handshake failed for client fd " << client_fd
+                              << " with error code: " << ssl_error << "\n";
+                    ERR_print_errors_fp(stderr);
+                    SSL_free(ssl);
+                    close(client_fd);
+                    continue;
+                }
+            }
+
             // Read HTTP request with error handling
             char readbuffer[4096] = {0};
-            ssize_t bytes_received = recv(client_fd, readbuffer, sizeof(readbuffer) - 1, 0);
+            ssize_t bytes_received;
+
+            if (ssl_enabled) {
+                bytes_received = SSL_read(ssl, readbuffer, sizeof(readbuffer) - 1);
+            } else {
+                bytes_received = recv(client_fd, readbuffer, sizeof(readbuffer) - 1, 0);
+            }
+
+            std::cout << "SSL enabled: " << (ssl_enabled ? "Yes" : "No") << "\n";
+
+            std::cout << readbuffer << std::endl;
 
             if (bytes_received < 0) {
                 std::cerr << "Error receiving data from client fd " << client_fd << "\n";
+                if (ssl) SSL_free(ssl);
                 close(client_fd);
                 continue;
             } else if (bytes_received == 0) {
                 std::cerr << "Client fd " << client_fd << " closed connection\n";
+                if (ssl) SSL_free(ssl);
                 close(client_fd);
                 continue;
             }
@@ -93,7 +154,19 @@ public:
             readbuffer[bytes_received] = '\0';
 
             std::string response = requestHandler(std::string(readbuffer));
-            send(client_fd, response.c_str(), response.size(), 0);
+
+            // Send response
+            if (ssl_enabled) {
+                SSL_write(ssl, response.c_str(), response.size());
+            } else {
+                send(client_fd, response.c_str(), response.size(), 0);
+            }
+
+            // Clean up SSL connection
+            if (ssl) {
+                SSL_shutdown(ssl);
+                SSL_free(ssl);
+            }
             close(client_fd);
         }
 
