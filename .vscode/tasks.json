@@ -1,0 +1,23 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build myhttp",
+            "type": "shell",
+            "command": "g++",
+            "args": [
+                "-o",
+                "${workspaceFolder}/src/myhttp",
+                "${workspaceFolder}/src/main.cpp",
+                "-lssl",
+                "-lcrypto",
+                "-g"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$gcc"]
+        }
+    ]
+}
